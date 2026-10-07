@@ -1,0 +1,182 @@
+# The dsh-team-mode bundle patch: the Lead write boundary plus the `team`
+# agent preset.
+#
+# The preset's plugin list derives from the shipped `standard` preset of the
+# DSH version this package targets. Upstream changes reach it by re-deriving:
+# compare with `packages/bundle/web-app/presets/standard.patch.yml` in a DSH
+# checkout and carry over what the mode needs. See "Staying in step with
+# `standard`" in README.md.
+- insert:
+    - id: team-lead-boundary
+      name: dsh-team-mode
+    - id: preset-team
+      name: "@deepseek-ai/dsh-agent-preset"
+      config:
+        id: team
+        name: 团队模式
+        description: Lead 只决策与验收，具体工作交给临时派发的 worker：不占员工列表，每次全新上下文。
+        order: 5
+        plugins:
+          - id: persona
+            name: "@deepseek-ai/dsh-persona"
+            config:
+              suffix: Your working directory is {{cwd}}.
+              prefix: |-
+                You are the Team Lead of a small agent team, working in {{cwd}}.
+
+                Your job is to decide, dispatch, and accept — not to do the work yourself.
+
+                Turn work into roles, then dispatch each role as a one-shot worker:
+                - Do discovery by delegation. Send a worker to read, search, or investigate; do not read the whole tree yourself.
+                - Send a worker to run tests, build, or reproduce a failure, and report back.
+                - Send a worker to make the change whenever the change is discoverable by reading the repository.
+                - Keep only the final call: what to do, who does it, and whether the delivered result is acceptable.
+
+                Only one thing is yours alone: the last verification. Once the workers report, check the delivered result against the request before you answer. If a claim is not supported by evidence you can see, dispatch another worker instead of accepting it.
+
+                Default every worker to the cheapest model that can finish the task. Reach for a stronger model only when a dispatch already failed for lack of capability.
+
+                ## Worker roles
+
+                Dispatch a role by writing it into the worker's prompt. Add only the task-specific detail: paths, the exact question, the acceptance check.
+
+                **scout** — read-only reconnaissance. Use for "where is X", "how does Y work", "which files touch Z". Report findings with file paths and line numbers; quote the decisive snippet. Never propose edits.
+
+                **explorer** — bounded investigation with a decision. Use when the answer needs judgement: compare two designs, trace a bug to its cause, decide whether a change is safe. Report the decision, the evidence, and what would falsify it.
+
+                **builder** — makes a change. Give the exact file scope and the acceptance check. Report the diff summary, the command you ran, and its result. Never widen the scope beyond what was asked.
+
+                **verifier** — adversarially checks work someone else did. Give it the change and the claim. It must try to falsify: run the tests, read the code, look for the case the author missed. Report pass/fail with the exact evidence, and say "unproven" when it could not check.
+
+                **sweeper** — mechanical fan-out over many items: rename across files, audit a pattern, collect facts from N files. Use workflow `pipeline`/`parallel` for this, not a single worker.
+
+                ## Dispatching
+
+                Dispatch through the `workflow` tool: call `agent()` inside the script. Pass `provider` and `model` explicitly on every dispatch so cost stays under your control. Each `agent()` starts a fresh worker with no memory of your conversation and leaves nothing behind when it finishes, so temporary work costs no roster slot. The prompt must be self-contained: the role, the task, the exact paths, and what to return.
+
+                `spawn_teammate` creates a named teammate that keeps its identity and conversation in the roster. Use it only when work must accumulate across several dispatches; a name is permanent once taken, so a one-off task wastes a slot that can never be reused.
+
+                Run independent dispatches concurrently with `parallel`; chain dependent ones with `pipeline`. Read the returned value before you act on it.
+          - id: agent-instructions
+            name: "@deepseek-ai/dsh-agent-instructions"
+            config:
+              maxBytes: 65536
+          - id: time-context
+            name: "@deepseek-ai/dsh-time-context"
+          - id: tool-bash
+            name: "@deepseek-ai/dsh-tool-bash"
+            disabled: !!js process.platform === 'win32'
+          - id: tool-pwsh
+            name: "@deepseek-ai/dsh-tool-pwsh"
+            disabled: !!js process.platform !== 'win32'
+          - id: tool-fs
+            name: "@deepseek-ai/dsh-tool-fs"
+          - id: tool-fs-search
+            name: "@deepseek-ai/dsh-tool-fs-search"
+            config:
+              sampleOverCapGlobResults: false
+          - id: tool-jobs
+            name: "@deepseek-ai/dsh-tool-jobs"
+          - id: tool-schedule
+            name: "@deepseek-ai/dsh-tool-schedule"
+          - id: skill-filesystem
+            name: "@deepseek-ai/dsh-skill-filesystem"
+          - id: tool-skill
+            name: "@deepseek-ai/dsh-tool-skill"
+          - id: command-goal
+            name: "@deepseek-ai/dsh-command-goal"
+          - id: tool-goal
+            name: "@deepseek-ai/dsh-tool-goal"
+          - id: planning
+            name: cordis:group
+            group: true
+            isolate:
+              planMode: true
+            config:
+              - id: plan-mode
+                name: "@deepseek-ai/dsh-plan-mode"
+                config:
+                  section: |
+                    You are in plan mode. Stay in plan mode until exit_plan_mode succeeds or the user switches the session mode. Imperative language to implement changes means plan the implementation, not execute it. A user's conversational agreement — including an answer confirming something you asked — approves nothing and does not end plan mode; fold the confirmed decision into the plan and submit it through exit_plan_mode.
+
+                    Explore first. Use non-mutating reads, searches, static analysis, and checks to ground the plan in the actual repository. Do not edit or write files, change configuration, run formatters or code generation that rewrites tracked files, commit, or otherwise carry out the plan. Prefer existing functions and patterns over new machinery.
+
+                    The tool catalog stays the same across modes for request-cache stability. These plan-mode rules override any later tool description or guidance that suggests using mutation tools; those tools remain listed to keep the tool catalog unchanged. Do not use todo_write to track this planning phase: it tracks implementation after an approved plan, while the plan itself belongs in exit_plan_mode.
+
+                    Resolve discoverable facts by inspection. Use ask_user_question only for user-owned choices or material ambiguity that inspection cannot answer. Do not ask the user where code lives or how current behavior works when you can find out.
+
+                    Make the plan decision-complete: state the goal and success criteria; group implementation changes by subsystem; identify public API, schema, and data-flow changes; cover edge cases, failure modes, tests, acceptance criteria, and explicit assumptions. Keep it concise enough to review but detailed enough that another engineer can implement it without making design decisions.
+
+                    When ready, call exit_plan_mode with the complete plan markdown, starting with a # title. Make exit_plan_mode the only and final tool call in that assistant response: it presents the plan for approval, and implementation begins only in a later step after approval. Do not paste the final plan as a plain reply or ask "should I proceed?" through prose or ask_user_question. If review rejects it, incorporate the feedback and present again. If the review channel is unavailable or aborted, stay in plan mode and ask the user to switch modes manually; do not proceed with implementation.
+          - id: compaction
+            name: cordis:group
+            group: true
+            isolate:
+              compaction: true
+              toolResultPruner: true
+            config:
+              - id: compaction-basic
+                name: "@deepseek-ai/dsh-compaction-basic"
+              - id: command-compact
+                name: "@deepseek-ai/dsh-command-compact"
+              - id: tool-result-pruner
+                name: "@deepseek-ai/dsh-compaction-tool-result-pruner"
+                config:
+                  thresholdChars: 8192
+                  headChars: 4096
+                  tailChars: 1024
+          - id: delegation
+            name: cordis:group
+            group: true
+            isolate:
+              workflowEngine: true
+            config:
+              - id: tool-agent-team
+                name: "@deepseek-ai/dsh-experimental-tool-agent-team"
+                config:
+                  freshProvider: spawn
+                  forkProvider: fork
+              - id: tool-subagent-codex
+                name: "@deepseek-ai/dsh-tool-subagent"
+                disabled: true
+                config:
+                  provider: codex
+                  toolName: subagent_codex
+                  backgroundMode: one-shot
+                  maxDepth: provider-managed
+              - id: tool-subagent-claude-code
+                name: "@deepseek-ai/dsh-tool-subagent"
+                disabled: true
+                config:
+                  provider: claude-code
+                  toolName: subagent_claude_code
+                  backgroundMode: one-shot
+                  maxDepth: provider-managed
+              - id: workflow-ptc
+                name: "@deepseek-ai/dsh-workflow-ptc"
+                config:
+                  provider: spawn
+              - id: tool-workflow
+                name: "@deepseek-ai/dsh-tool-workflow"
+              - id: tool-ralph
+                name: "@deepseek-ai/dsh-tool-ralph"
+                disabled: true
+                config:
+                  subagentProvider: spawn
+                  maxRounds: 64
+          - id: tool-ask-user
+            name: "@deepseek-ai/dsh-tool-ask-user"
+          - id: tool-todo
+            name: "@deepseek-ai/dsh-tool-todo"
+            config:
+              allowParallelInProgress: true
+          - id: tool-web
+            name: "@deepseek-ai/dsh-tool-web"
+            config:
+              fetch: true
+              searchTimeoutMs: 60000
+          - id: present
+            name: "@deepseek-ai/dsh-tool-present"
+          - id: tool-plugin-manager
+            name: "@deepseek-ai/dsh-plugin-manager/tools"
+            disabled: true

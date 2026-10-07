@@ -1,0 +1,43 @@
+{
+  "name": "dsh-team-mode",
+  "version": "0.1.0",
+  "description": "DeepSeek Harness plugin: a `team` agent preset whose Lead decides and dispatches while short-lived workers do the writing",
+  "license": "MIT",
+  "keywords": [
+    "deepseek-harness",
+    "dsh",
+    "plugin",
+    "agent-preset",
+    "agent-team",
+    "multi-agent",
+    "orchestration",
+    "subagent",
+    "workflow"
+  ],
+  "type": "module",
+  "main": "./lead-boundary.js",
+  "engines": {
+    "node": ">=20"
+  },
+  "files": [
+    "lead-boundary.js",
+    "cordis.patch.yml",
+    "README.md",
+    "LICENSE"
+  ],
+  "exports": {
+    ".": "./lead-boundary.js",
+    "./package.json": "./package.json"
+  },
+  "scripts": {
+    "test": "node --test \"test/*.test.mjs\""
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "devDependencies": {
+    "yaml": "^2.9.0"
+  }
+}
